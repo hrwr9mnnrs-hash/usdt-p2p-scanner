@@ -145,16 +145,29 @@ def fetch_ads(side: str, cfg: dict[str, Any]) -> list[Ad]:
         advertiser = item.get("advertiser", item.get("merchant", {}))
 
         def pick(*keys, default=None):
+            # Prefer a non-empty/non-zero value across nested and flat schemas.
+            fallback = default
             for obj in (adv, item, advertiser):
-                if isinstance(obj, dict):
-                    for key in keys:
-                        val = obj.get(key)
-                        if val not in (None, ""):
+                if not isinstance(obj, dict):
+                    continue
+                for key in keys:
+                    if key not in obj:
+                        continue
+                    val = obj.get(key)
+                    if val in (None, ""):
+                        continue
+                    if fallback == default:
+                        fallback = val
+                    try:
+                        if float(val) != 0:
                             return val
-            return default
+                    except (TypeError, ValueError):
+                        if val:
+                            return val
+            return fallback
 
         try:
-            raw_methods = pick("tradeMethods", "tradeMethodIdentifiers", default=[]) or []
+            raw_methods = pick("tradeMethods", "trade_methods", "tradeMethodIdentifiers", "trade_method_identifiers", default=[]) or []
             methods = []
             for m in raw_methods:
                 if isinstance(m, dict):
@@ -164,13 +177,13 @@ def fetch_ads(side: str, cfg: dict[str, Any]) -> list[Ad]:
 
             ads.append(Ad(
                 side=side,
-                price=float(pick("price")),
-                available_usdt=float(pick("surplusAmount", "tradableQuantity", "availableAmount", default=0)),
-                min_inr=float(pick("minSingleTransAmount", "minAmount", "minLimit", default=0)),
-                max_inr=float(pick("maxSingleTransAmount", "dynamicMaxSingleTransAmount", "maxAmount", "maxLimit", default=0)),
-                nick=str(pick("nickName", "merchantNickName", "nick", default="unknown")),
-                completion_pct=float(pick("monthFinishRate", "completionRate", "finishRate", default=0) or 0),
-                completed_orders=int(float(pick("monthOrderCount", "completedOrderNum", "orderCount", default=0) or 0)),
+                price=float(pick("price", "adv_price", default=0)),
+                available_usdt=float(pick("surplusAmount", "surplus_amount", "tradableQuantity", "tradable_quantity", "availableAmount", "available_amount", default=0)),
+                min_inr=float(pick("minSingleTransAmount", "min_single_trans_amount", "minAmount", "min_amount", "minLimit", "min_limit", default=0)),
+                max_inr=float(pick("maxSingleTransAmount", "max_single_trans_amount", "dynamicMaxSingleTransAmount", "dynamic_max_single_trans_amount", "maxAmount", "max_amount", "maxLimit", "max_limit", default=0)),
+                nick=str(pick("nickName", "nick_name", "merchantNickName", "merchant_nick_name", "nick", default="unknown")),
+                completion_pct=float(pick("monthFinishRate", "month_finish_rate", "completionRate", "completion_rate", "finishRate", "finish_rate", default=0) or 0),
+                completed_orders=int(float(pick("monthOrderCount", "month_order_count", "completedOrderNum", "completed_order_num", "orderCount", "order_count", default=0) or 0)),
                 methods=methods,
                 merchant=bool(pick("userType", default="") == "merchant"),
                 shield=bool(pick("isShieldMerchant", default=False)),
@@ -335,6 +348,11 @@ def evaluate(cfg):
     print("=" * 78)
 
     if not buy_depth or not sell_depth:
+        # Safe schema diagnostic: show field names only, never credentials.
+        if buy_raw:
+            print("BUY sample fields:", sorted(list(buy_raw[0].__dict__.keys())))
+        if sell_raw:
+            print("SELL sample fields:", sorted(list(sell_raw[0].__dict__.keys())))
         print("⚠️ UNABLE TO VERIFY — DO NOT TRADE")
         print("Insufficient usable advertiser depth for the configured capital.")
         if not buy_depth:
