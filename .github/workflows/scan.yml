@@ -25,7 +25,7 @@ jobs:
 
       - name: Run scanner
         env:
-          CAPITAL_INR: "50000"
+          CAPITAL_INR: "60000"
         run: |
           python scanner.py --capital "$CAPITAL_INR" | tee scan_output.txt
 
