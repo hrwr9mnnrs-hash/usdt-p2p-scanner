@@ -101,6 +101,48 @@ def fetch_trade_methods() -> dict[str, str]:
         if isinstance(x, dict) and x.get("identifier")
     }
 
+
+def find_first_value(obj, keys, prefer_nonzero=True):
+    """Recursively find the first useful value for any of the supplied keys."""
+    wanted = {str(k).lower() for k in keys}
+    fallback = None
+
+    def walk(x):
+        nonlocal fallback
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if str(k).lower() in wanted:
+                    if v not in (None, ""):
+                        if fallback is None:
+                            fallback = v
+                        if not prefer_nonzero:
+                            return v
+                        try:
+                            if float(v) != 0:
+                                return v
+                        except (TypeError, ValueError):
+                            return v
+                found = walk(v)
+                if found not in (None, ""):
+                    try:
+                        if not prefer_nonzero or float(found) != 0:
+                            return found
+                    except (TypeError, ValueError):
+                        return found
+        elif isinstance(x, list):
+            for item in x:
+                found = walk(item)
+                if found not in (None, ""):
+                    try:
+                        if not prefer_nonzero or float(found) != 0:
+                            return found
+                    except (TypeError, ValueError):
+                        return found
+        return None
+
+    found = walk(obj)
+    return found if found not in (None, "") else fallback
+
 def fetch_ads(side: str, cfg: dict[str, Any]) -> list[Ad]:
     methods_map = fetch_trade_methods()
     requested = cfg.get("payment_methods") or []
@@ -177,10 +219,10 @@ def fetch_ads(side: str, cfg: dict[str, Any]) -> list[Ad]:
 
             ads.append(Ad(
                 side=side,
-                price=float(pick("price", "adv_price", default=0)),
-                available_usdt=float(pick("surplusAmount", "surplus_amount", "tradableQuantity", "tradable_quantity", "availableAmount", "available_amount", default=0)),
-                min_inr=float(pick("minSingleTransAmount", "min_single_trans_amount", "minAmount", "min_amount", "minLimit", "min_limit", default=0)),
-                max_inr=float(pick("maxSingleTransAmount", "max_single_trans_amount", "dynamicMaxSingleTransAmount", "dynamic_max_single_trans_amount", "maxAmount", "max_amount", "maxLimit", "max_limit", default=0)),
+                price=float(find_first_value(item, ["price", "adv_price"]) or pick("price", "adv_price", default=0)),
+                available_usdt=float(find_first_value(item, ["surplusAmount", "surplus_amount", "tradableQuantity", "tradable_quantity", "availableAmount", "available_amount"]) or 0),
+                min_inr=float(find_first_value(item, ["minSingleTransAmount", "min_single_trans_amount", "minAmount", "min_amount", "minLimit", "min_limit"]) or 0),
+                max_inr=float(find_first_value(item, ["dynamicMaxSingleTransAmount", "dynamic_max_single_trans_amount", "maxSingleTransAmount", "max_single_trans_amount", "maxAmount", "max_amount", "maxLimit", "max_limit"]) or 0),
                 nick=str(pick("nickName", "nick_name", "merchantNickName", "merchant_nick_name", "nick", default="unknown")),
                 completion_pct=float(pick("monthFinishRate", "month_finish_rate", "completionRate", "completion_rate", "finishRate", "finish_rate", default=0) or 0),
                 completed_orders=int(float(pick("monthOrderCount", "month_order_count", "completedOrderNum", "completed_order_num", "orderCount", "order_count", default=0) or 0)),
@@ -350,9 +392,11 @@ def evaluate(cfg):
     if not buy_depth or not sell_depth:
         # Safe schema diagnostic: show field names only, never credentials.
         if buy_raw:
-            print("BUY sample fields:", sorted(list(buy_raw[0].__dict__.keys())))
+            b = buy_raw[0]
+            print(f"BUY parsed sample: price={b.price} available_usdt={b.available_usdt} min={b.min_inr} max={b.max_inr} merchant={b.nick}")
         if sell_raw:
-            print("SELL sample fields:", sorted(list(sell_raw[0].__dict__.keys())))
+            s = sell_raw[0]
+            print(f"SELL parsed sample: price={s.price} available_usdt={s.available_usdt} min={s.min_inr} max={s.max_inr} merchant={s.nick}")
         print("⚠️ UNABLE TO VERIFY — DO NOT TRADE")
         print("Insufficient usable advertiser depth for the configured capital.")
         if not buy_depth:
