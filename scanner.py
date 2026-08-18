@@ -190,18 +190,30 @@ def method_ok(ad: Ad, methods: list[str]) -> bool:
     return any(m.lower() in wanted for m in ad.methods)
 
 def filter_ads(ads: list[Ad], cfg: dict[str, Any]) -> list[Ad]:
+    # Do not silently reject advertisers because optional merchant fields are
+    # missing from the public API. UNKNOWN is not the same as poor quality.
     out = []
     for a in ads:
         if a.price <= 0 or a.available_usdt <= 0:
-            continue
-        if a.completion_pct < float(cfg["min_completion_pct"]):
-            continue
-        if a.completed_orders < int(cfg["min_completed_orders"]):
             continue
         if not method_ok(a, cfg["payment_methods"]):
             continue
         out.append(a)
     return out
+
+
+def diagnostic_counts(raw_ads: list[Ad], cfg: dict[str, Any]) -> dict[str, int]:
+    counts = {"raw": len(raw_ads), "payment": 0, "liquidity": 0, "quality_known": 0}
+    for a in raw_ads:
+        if not method_ok(a, cfg["payment_methods"]):
+            continue
+        counts["payment"] += 1
+        if a.available_usdt > 0 and a.price > 0:
+            counts["liquidity"] += 1
+        if a.completion_pct > 0 or a.completed_orders > 0:
+            counts["quality_known"] += 1
+    return counts
+
 
 def executable_depth(ads: list[Ad], capital_inr: float, side: str):
     """
@@ -306,6 +318,12 @@ def evaluate(cfg):
         print(f"\n⚠️ UNABLE TO VERIFY — DO NOT TRADE\nData fetch failed: {e}")
         return
 
+    buy_diag = diagnostic_counts(buy_raw, cfg)
+    sell_diag = diagnostic_counts(sell_raw, cfg)
+
+    print(f"BUY ads: raw={buy_diag['raw']} payment={buy_diag['payment']} liquidity={buy_diag['liquidity']} quality_fields={buy_diag['quality_known']}")
+    print(f"SELL ads: raw={sell_diag['raw']} payment={sell_diag['payment']} liquidity={sell_diag['liquidity']} quality_fields={sell_diag['quality_known']}")
+
     buy_ads = filter_ads(buy_raw, cfg)
     sell_ads = filter_ads(sell_raw, cfg)
 
@@ -319,6 +337,11 @@ def evaluate(cfg):
     if not buy_depth or not sell_depth:
         print("⚠️ UNABLE TO VERIFY — DO NOT TRADE")
         print("Insufficient usable advertiser depth for the configured capital.")
+        if not buy_depth:
+            print("BUY side: no executable depth after current filters.")
+        if not sell_depth:
+            print("SELL side: no executable depth after current filters.")
+        print("The scanner will not invent prices or assume unavailable liquidity.")
         return
 
     result = calculate(cfg, buy_depth, sell_depth)
@@ -352,11 +375,11 @@ def evaluate(cfg):
     print("\nBUY fills:")
     for a, notional, usdt in buy_depth["fills"]:
         print(f"  {a.nick:20} ₹{a.price:.4f} | ₹{notional:,.0f} | {usdt:,.4f} USDT | "
-              f"limit ₹{a.min_inr:,.0f}-₹{a.max_inr:,.0f} | {a.completion_pct:.1f}%")
+              f"limit ₹{a.min_inr:,.0f}-₹{a.max_inr:,.0f} | completion {a.completion_pct:.1f}% if reported, else UNKNOWN")
     print("SELL fills:")
     for a, notional, usdt in sell_depth["fills"]:
         print(f"  {a.nick:20} ₹{a.price:.4f} | ₹{notional:,.0f} | {usdt:,.4f} USDT | "
-              f"limit ₹{a.min_inr:,.0f}-₹{a.max_inr:,.0f} | {a.completion_pct:.1f}%")
+              f"limit ₹{a.min_inr:,.0f}-₹{a.max_inr:,.0f} | completion {a.completion_pct:.1f}% if reported, else UNKNOWN")
 
     snapshot = {
         "timestamp_ist": now.isoformat(),
